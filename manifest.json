@@ -1,0 +1,10 @@
+{
+  "id": "sidebarrer",
+  "name": "Sidebarrer",
+  "version": "0.1.0",
+  "minAppVersion": "0.15.0",
+  "description": "Manually reorder files and folders in the file explorer via drag-and-drop or context menu.",
+  "author": "TitanDrive",
+  "authorUrl": "https://github.com/titandrive/sidebarrer",
+  "isDesktopOnly": false
+}

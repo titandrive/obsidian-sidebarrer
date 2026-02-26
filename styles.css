@@ -1,0 +1,13 @@
+/* Drop indicator lines using data attributes on tree items */
+.tree-item[data-sidebarrer-drop="before"] {
+  border-top: 2px solid var(--color-accent);
+}
+
+.tree-item[data-sidebarrer-drop="after"] {
+  border-bottom: 2px solid var(--color-accent);
+}
+
+/* Dim the item being dragged */
+[data-sidebarrer-dragging] {
+  opacity: 0.4;
+}
