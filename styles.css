@@ -12,6 +12,11 @@
   opacity: 0.4;
 }
 
+/* Ribbon icon when custom order is off */
+.sidebarrer-ribbon-off {
+  opacity: 0.3;
+}
+
 /* Prevent text selection while dragging */
 body.sidebarrer-dragging * {
   user-select: none !important;

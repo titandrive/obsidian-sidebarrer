@@ -42,7 +42,7 @@ export class Patcher {
               folder
             );
 
-            if (bypass) {
+            if (bypass || !plugin.settings.enabled) {
               return items;
             }
 

@@ -12,6 +12,7 @@ export default class SidebarrerPlugin extends Plugin {
   private patcher: Patcher;
   private dragDrop: DragDropManager;
   private contextMenu: ContextMenuManager;
+  private ribbonEl: HTMLElement | null = null;
 
   async onload(): Promise<void> {
     console.log("Sidebarrer: onload");
@@ -23,6 +24,7 @@ export default class SidebarrerPlugin extends Plugin {
     this.contextMenu = new ContextMenuManager(this);
 
     this.addSettingTab(new SidebarrerSettingTab(this.app, this));
+    this.addRibbonToggle();
 
     this.app.workspace.onLayoutReady(() => {
       console.log("Sidebarrer: layout ready");
@@ -110,6 +112,38 @@ export default class SidebarrerPlugin extends Plugin {
     // setSortOrder triggers a full re-render, sort() alone may not
     console.log("Sidebarrer: sortExplorer - current sortOrder:", view.sortOrder);
     view.setSortOrder(view.sortOrder);
+  }
+
+  private addRibbonToggle(): void {
+    this.ribbonEl = this.addRibbonIcon(
+      "arrow-up-down",
+      "Toggle custom order",
+      async () => {
+        this.settings.enabled = !this.settings.enabled;
+        await this.saveSettings();
+
+        if (this.settings.enabled) {
+          this.dragDrop.enable();
+        } else {
+          this.dragDrop.disable();
+        }
+
+        this.sortExplorer();
+        this.updateRibbonState();
+      }
+    );
+    this.updateRibbonState();
+  }
+
+  private updateRibbonState(): void {
+    if (!this.ribbonEl) return;
+    this.ribbonEl.toggleClass(
+      "sidebarrer-ribbon-off",
+      !this.settings.enabled
+    );
+    this.ribbonEl.ariaLabel = this.settings.enabled
+      ? "Sidebarrer: custom order on"
+      : "Sidebarrer: custom order off";
   }
 
   async loadSettings(): Promise<void> {

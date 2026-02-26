@@ -3,6 +3,7 @@ import type SidebarrerPlugin from "./main";
 import type { SidebarrerSettings } from "./types";
 
 export const DEFAULT_SETTINGS: SidebarrerSettings = {
+  enabled: true,
   foldersFirst: true,
   newItemPosition: "bottom",
   customOrder: {},

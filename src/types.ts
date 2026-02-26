@@ -3,6 +3,7 @@ import { TAbstractFile, TFolder } from "obsidian";
 export type FolderOrder = Record<string, string[]>;
 
 export interface SidebarrerSettings {
+  enabled: boolean;
   foldersFirst: boolean;
   newItemPosition: "top" | "bottom";
   customOrder: FolderOrder;
