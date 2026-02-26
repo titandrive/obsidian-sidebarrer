@@ -105,13 +105,25 @@ export default class SidebarrerPlugin extends Plugin {
 
   sortExplorer(): void {
     const view = this.getFileExplorerView();
-    if (!view) {
-      console.log("Sidebarrer: sortExplorer - no view");
-      return;
+    if (!view) return;
+
+    // view.sort() re-renders root-level items via getSortedFolderItems
+    view.sort();
+
+    if (!this.settings.enabled) return;
+
+    // For nested folders, sort() doesn't re-render expanded children.
+    // Toggle their collapse state to force Obsidian to rebuild them,
+    // which calls our patched getSortedFolderItems.
+    for (const folderPath of Object.keys(this.settings.customOrder)) {
+      if (folderPath === "/" || folderPath === "") continue;
+      const item = view.fileItems[folderPath];
+      if (item && !item.collapsed) {
+        console.log("Sidebarrer: toggling collapse for", folderPath);
+        item.setCollapsed(true, false);
+        item.setCollapsed(false, false);
+      }
     }
-    // setSortOrder triggers a full re-render, sort() alone may not
-    console.log("Sidebarrer: sortExplorer - current sortOrder:", view.sortOrder);
-    view.setSortOrder(view.sortOrder);
   }
 
   private addRibbonToggle(): void {
@@ -142,8 +154,8 @@ export default class SidebarrerPlugin extends Plugin {
       !this.settings.enabled
     );
     this.ribbonEl.ariaLabel = this.settings.enabled
-      ? "Sidebarrer: custom order on"
-      : "Sidebarrer: custom order off";
+      ? "Turn custom sort order off"
+      : "Turn custom sort order on";
   }
 
   async loadSettings(): Promise<void> {

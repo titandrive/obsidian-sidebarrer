@@ -51,8 +51,11 @@ export class Patcher {
               plugin.settings.customOrder[folderPath];
 
             if (!customOrder || customOrder.length === 0) {
+              console.log("Sidebarrer: getSortedFolderItems - no custom order for", folderPath);
               return items;
             }
+
+            console.log("Sidebarrer: getSortedFolderItems - applying order for", folderPath, "customOrder:", JSON.stringify(customOrder), "items:", items.map(i => i.file.path));
 
             // Sort the original array IN-PLACE using custom order
             // This is critical — Obsidian expects the same array reference
