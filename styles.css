@@ -1,4 +1,4 @@
-/* Drop indicator lines using data attributes on tree items */
+/* Drop indicator lines */
 .tree-item[data-sidebarrer-drop="before"] {
   border-top: 2px solid var(--color-accent);
 }
@@ -10,4 +10,10 @@
 /* Dim the item being dragged */
 [data-sidebarrer-dragging] {
   opacity: 0.4;
+}
+
+/* Prevent text selection while dragging */
+body.sidebarrer-dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }

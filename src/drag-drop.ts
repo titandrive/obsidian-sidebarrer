@@ -1,222 +1,354 @@
 import type SidebarrerPlugin from "./main";
+import type { FileTreeItem } from "./types";
+
+const DRAG_THRESHOLD = 8;
+
+interface DragState {
+  path: string;
+  startX: number;
+  startY: number;
+  isDragging: boolean;
+  useMouseEvents: boolean;
+  futureSibling: FileTreeItem | null;
+  dropPosition: "before" | "after";
+}
 
 export class DragDropManager {
-  private explorerEl: HTMLElement | null = null;
-  private dragStartHandler: ((e: DragEvent) => void) | null = null;
   private cleanupFns: (() => void)[] = [];
+  private rafId = 0;
+  private dragState: DragState | null = null;
+  private navContainer: HTMLElement | null = null;
 
   constructor(private plugin: SidebarrerPlugin) {}
 
   enable(): void {
-    const leaf =
-      this.plugin.app.workspace.getLeavesOfType("file-explorer")[0];
-    if (!leaf) return;
-
-    this.explorerEl =
-      leaf.view.containerEl.querySelector(".nav-files-container");
-    if (!this.explorerEl) {
-      console.log("Sidebarrer: .nav-files-container not found");
+    const view = this.plugin.getFileExplorerView();
+    if (!view) {
+      console.log("Sidebarrer: drag-drop: no view");
       return;
     }
 
-    this.setupDragListeners();
+    const viewContent = view.containerEl;
+    let navContainer =
+      viewContent.querySelector<HTMLElement>(
+        ".nav-files-container"
+      ) || viewContent;
+
+    this.navContainer = navContainer;
+
+    // --- Phase 1: mousedown starts tracking ---
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+
+      const raw = e.target as HTMLElement;
+      const target =
+        raw?.closest?.<HTMLElement>(".tree-item-self") ||
+        raw?.closest?.<HTMLElement>("[data-path]");
+
+      if (!target || !navContainer.contains(target)) return;
+
+      const path = target.dataset.path;
+      if (!path) return;
+
+      this.dragState = {
+        path,
+        startX: e.clientX,
+        startY: e.clientY,
+        isDragging: false,
+        useMouseEvents: false,
+        futureSibling: null,
+        dropPosition: "before",
+      };
+    };
+
+    // --- Phase 2a: mousemove for mouse-based drag ---
+    const onMouseMove = (e: MouseEvent) => {
+      if (!this.dragState) return;
+
+      if (
+        this.dragState.isDragging &&
+        this.dragState.useMouseEvents
+      ) {
+        e.preventDefault();
+        this.updateDragPosition(e.clientX, e.clientY);
+        return;
+      }
+
+      if (!this.dragState.isDragging) {
+        const dx = e.clientX - this.dragState.startX;
+        const dy = e.clientY - this.dragState.startY;
+        if (Math.sqrt(dx * dx + dy * dy) >= DRAG_THRESHOLD) {
+          this.dragState.isDragging = true;
+          this.dragState.useMouseEvents = true;
+          this.startDrag();
+          e.preventDefault();
+        }
+      }
+    };
+
+    // --- Phase 2b: dragstart for HTML5 drag ---
+    const onDragStart = (e: DragEvent) => {
+      if (
+        this.dragState?.isDragging &&
+        this.dragState.useMouseEvents
+      ) {
+        e.preventDefault();
+        return;
+      }
+
+      const target =
+        (
+          e.target as HTMLElement
+        )?.closest<HTMLElement>(".tree-item-self") ||
+        (
+          e.target as HTMLElement
+        )?.closest<HTMLElement>("[data-path]");
+      if (!target || !navContainer.contains(target)) return;
+
+      const path = target.dataset.path;
+      if (!path) return;
+
+      if (this.dragState && this.dragState.path === path) {
+        this.dragState.isDragging = true;
+        this.dragState.useMouseEvents = false;
+      } else {
+        this.dragState = {
+          path,
+          startX: 0,
+          startY: 0,
+          isDragging: true,
+          useMouseEvents: false,
+          futureSibling: null,
+          dropPosition: "before",
+        };
+      }
+
+      console.log(
+        "Sidebarrer: native drag started for",
+        this.dragState.path
+      );
+      this.startDrag();
+    };
+
+    // --- Phase 3: drag event tracking (HTML5 path) ---
+    const onDrag = (e: DragEvent) => {
+      if (
+        !this.dragState?.isDragging ||
+        this.dragState.useMouseEvents
+      )
+        return;
+      if (e.clientY === 0 && e.clientX === 0) return;
+      this.updateDragPosition(e.clientX, e.clientY);
+    };
+
+    // --- Phase 4a: mouseup ends mouse-based drag ---
+    const onMouseUp = () => {
+      if (!this.dragState) return;
+      if (
+        this.dragState.isDragging &&
+        this.dragState.useMouseEvents
+      ) {
+        this.endDrag();
+      }
+      if (!this.dragState?.isDragging) {
+        this.dragState = null;
+      }
+    };
+
+    // --- Phase 4b: dragend ends HTML5 drag ---
+    const onDragEnd = () => {
+      if (!this.dragState?.isDragging) return;
+      this.endDrag();
+    };
+
+    document.addEventListener("mousedown", onMouseDown, true);
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    navContainer.addEventListener("dragstart", onDragStart);
+    navContainer.addEventListener("drag", onDrag);
+    navContainer.addEventListener("dragend", onDragEnd);
+    document.addEventListener("dragstart", onDragStart, true);
+
+    this.cleanupFns.push(
+      () =>
+        document.removeEventListener(
+          "mousedown",
+          onMouseDown,
+          true
+        ),
+      () =>
+        document.removeEventListener("mousemove", onMouseMove),
+      () => document.removeEventListener("mouseup", onMouseUp),
+      () =>
+        navContainer.removeEventListener(
+          "dragstart",
+          onDragStart
+        ),
+      () => navContainer.removeEventListener("drag", onDrag),
+      () =>
+        navContainer.removeEventListener("dragend", onDragEnd),
+      () =>
+        document.removeEventListener(
+          "dragstart",
+          onDragStart,
+          true
+        )
+    );
+
     console.log("Sidebarrer: drag-and-drop enabled");
   }
 
   disable(): void {
-    for (const cleanup of this.cleanupFns) {
-      cleanup();
+    if (this.dragState) {
+      this.clearIndicators();
+      document.body.classList.remove("sidebarrer-dragging");
+      this.dragState = null;
     }
+    for (const fn of this.cleanupFns) fn();
     this.cleanupFns = [];
-    this.explorerEl = null;
+    this.navContainer = null;
   }
 
-  private setupDragListeners(): void {
-    if (!this.explorerEl) return;
-
-    this.dragStartHandler = (e: DragEvent) => {
-      const draggedEl = (
-        e.target as HTMLElement
-      ).closest<HTMLElement>(".tree-item-self");
-      if (!draggedEl) return;
-
-      const draggedPath = draggedEl.getAttribute("data-path");
-      if (!draggedPath) return;
-
-      console.log("Sidebarrer: drag started for", draggedPath);
-
-      // Mark the dragged element
-      draggedEl.dataset.sidebarrerDragging = "";
-      this.explorerEl!.dataset.sidebarrerDragActive = "";
-
-      // Collapse dragged folder
-      this.collapseDraggedFolder(draggedPath);
-
-      let futureSibling: HTMLElement | null = null;
-      let dropPosition: "before" | "after" = "before";
-
-      const onDrag = (e: DragEvent) => {
-        cancelAnimationFrame(this.rafId);
-        this.rafId = requestAnimationFrame(() => {
-          // Check if pointer is outside explorer
-          if (!this.explorerEl) return;
-          const explorerRect =
-            this.explorerEl.getBoundingClientRect();
-          const isOutside =
-            e.clientX < explorerRect.left ||
-            e.clientX > explorerRect.right ||
-            e.clientY < explorerRect.top ||
-            e.clientY > explorerRect.bottom;
-
-          if (isOutside || e.clientY === 0) {
-            this.clearDropIndicators();
-            futureSibling = null;
-            return;
-          }
-
-          const result = this.findDropTarget(
-            e.clientY,
-            draggedPath
-          );
-          futureSibling = result.futureSibling;
-          dropPosition = result.dropPosition;
-          this.updateDropIndicators(futureSibling, dropPosition);
-        });
-      };
-
-      const onDragEnd = () => {
-        console.log("Sidebarrer: drag ended");
-        cancelAnimationFrame(this.rafId);
-        draggedEl.removeEventListener("drag", onDrag);
-
-        this.clearDropIndicators();
-        delete this.explorerEl!.dataset.sidebarrerDragActive;
-
-        if (futureSibling) {
-          const siblingEl =
-            futureSibling.querySelector<HTMLElement>(
-              ".tree-item-self"
-            );
-          const siblingPath = siblingEl?.dataset.path;
-
-          if (siblingPath && siblingPath !== draggedPath) {
-            // Check same parent
-            const draggedParent =
-              this.plugin.orderManager.getParentPath(draggedPath);
-            const siblingParent =
-              this.plugin.orderManager.getParentPath(siblingPath);
-
-            if (draggedParent === siblingParent) {
-              console.log(
-                "Sidebarrer: moving",
-                draggedPath,
-                dropPosition,
-                siblingPath
-              );
-              this.plugin.orderManager.moveItem(
-                draggedPath,
-                siblingPath,
-                dropPosition
-              );
-              this.plugin.saveSettings();
-              this.plugin.sortExplorer();
-            }
-          }
-        }
-
-        futureSibling = null;
-      };
-
-      draggedEl.addEventListener("drag", onDrag);
-      draggedEl.addEventListener("dragend", onDragEnd, {
-        once: true,
-      });
-    };
-
-    this.explorerEl.addEventListener(
-      "dragstart",
-      this.dragStartHandler
+  private startDrag(): void {
+    if (!this.dragState) return;
+    console.log(
+      "Sidebarrer: drag started for",
+      this.dragState.path
     );
+    document.body.classList.add("sidebarrer-dragging");
+    this.collapseDraggedFolder(this.dragState.path);
+  }
 
-    this.cleanupFns.push(() => {
-      if (this.dragStartHandler && this.explorerEl) {
-        this.explorerEl.removeEventListener(
-          "dragstart",
-          this.dragStartHandler
-        );
+  private updateDragPosition(
+    clientX: number,
+    clientY: number
+  ): void {
+    if (!this.dragState || !this.navContainer) return;
+
+    cancelAnimationFrame(this.rafId);
+    this.rafId = requestAnimationFrame(() => {
+      if (!this.dragState || !this.navContainer) return;
+
+      const containerRect =
+        this.navContainer.getBoundingClientRect();
+      const isOutside =
+        clientX < containerRect.left ||
+        clientX > containerRect.right ||
+        clientY < containerRect.top ||
+        clientY > containerRect.bottom;
+
+      if (isOutside) {
+        this.clearIndicators();
+        this.dragState.futureSibling = null;
+        return;
       }
+
+      const result = this.findDropTarget(
+        clientY,
+        this.dragState.path
+      );
+      this.dragState.futureSibling = result.futureSibling;
+      this.dragState.dropPosition = result.dropPosition;
+      this.updateIndicators(
+        result.futureSibling?.el ?? null,
+        result.dropPosition
+      );
     });
   }
 
-  private rafId = 0;
+  private endDrag(): void {
+    cancelAnimationFrame(this.rafId);
+    this.clearIndicators();
+    document.body.classList.remove("sidebarrer-dragging");
 
+    if (!this.dragState) return;
+
+    const { futureSibling, path, dropPosition } = this.dragState;
+    this.dragState = null;
+
+    if (!futureSibling) return;
+
+    const siblingPath = futureSibling.file.path;
+    if (siblingPath === path) return;
+
+    const draggedParent =
+      this.plugin.orderManager.getParentPath(path);
+    const siblingParent =
+      this.plugin.orderManager.getParentPath(siblingPath);
+
+    if (draggedParent === siblingParent) {
+      console.log(
+        "Sidebarrer: moving",
+        path,
+        dropPosition,
+        siblingPath
+      );
+      this.plugin.orderManager.moveItem(
+        path,
+        siblingPath,
+        dropPosition
+      );
+      this.plugin.saveSettings();
+      this.plugin.sortExplorer();
+    }
+  }
+
+  /**
+   * Find the nearest drop target using view.fileItems (API-based, not DOM-based).
+   * This avoids issues with wrapper divs or unexpected DOM structures.
+   */
   private findDropTarget(
     mouseY: number,
     draggedPath: string
   ): {
-    futureSibling: HTMLElement | null;
+    futureSibling: FileTreeItem | null;
     dropPosition: "before" | "after";
   } {
-    if (!this.explorerEl) {
+    const view = this.plugin.getFileExplorerView();
+    if (!view) {
       return { futureSibling: null, dropPosition: "before" };
     }
 
-    // Get all visible tree items, excluding children of the dragged folder
-    const treeItems = Array.from<HTMLElement>(
-      this.explorerEl.querySelectorAll(".tree-item")
-    ).filter((item) => {
-      const selfEl = item.querySelector<HTMLElement>(
-        ".tree-item-self"
-      );
-      if (!selfEl) return false;
-      const path = selfEl.dataset.path;
-      if (!path) return false;
-      // Exclude the dragged item and its children
-      if (
-        path === draggedPath ||
-        path.startsWith(draggedPath + "/")
-      ) {
-        return false;
-      }
-      return true;
-    });
+    const draggedParent =
+      this.plugin.orderManager.getParentPath(draggedPath);
 
-    if (!treeItems.length) {
-      return { futureSibling: null, dropPosition: "before" };
-    }
-
-    let bestItem = treeItems[0];
+    // Find siblings (items in same folder) using Obsidian's API
+    let bestItem: FileTreeItem | null = null;
     let bestPosition: "before" | "after" = "before";
     let bestDist = Infinity;
 
-    for (const item of treeItems) {
-      const rect = item.getBoundingClientRect();
-      const topDist = Math.abs(rect.top - mouseY);
-      const bottomDist = Math.abs(rect.bottom - mouseY);
+    for (const [itemPath, item] of Object.entries(
+      view.fileItems
+    )) {
+      if (itemPath === draggedPath) continue;
+      if (
+        this.plugin.orderManager.getParentPath(itemPath) !==
+        draggedParent
+      )
+        continue;
+      if (!item.selfEl) continue;
 
-      if (topDist < bestDist) {
-        bestDist = topDist;
+      const rect = item.selfEl.getBoundingClientRect();
+      // Skip items not visible (height 0 or off-screen)
+      if (rect.height === 0) continue;
+
+      const midY = rect.top + rect.height / 2;
+      const dist = Math.abs(midY - mouseY);
+
+      if (dist < bestDist) {
+        bestDist = dist;
         bestItem = item;
-        bestPosition = "before";
-      }
-      if (bottomDist < bestDist) {
-        bestDist = bottomDist;
-        bestItem = item;
-        bestPosition = "after";
+        bestPosition = mouseY < midY ? "before" : "after";
       }
     }
 
-    return {
-      futureSibling: bestItem,
-      dropPosition: bestPosition,
-    };
+    return { futureSibling: bestItem, dropPosition: bestPosition };
   }
 
-  private updateDropIndicators(
+  private updateIndicators(
     target: HTMLElement | null,
     position: "before" | "after"
   ): void {
-    // Clear previous indicators
     document
       .querySelectorAll("[data-sidebarrer-drop]")
       .forEach((el) => el.removeAttribute("data-sidebarrer-drop"));
@@ -226,7 +358,7 @@ export class DragDropManager {
     }
   }
 
-  private clearDropIndicators(): void {
+  private clearIndicators(): void {
     document
       .querySelectorAll("[data-sidebarrer-dragging]")
       .forEach((el) =>
